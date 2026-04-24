@@ -20,7 +20,7 @@ kind: GatewayClass
 metadata:
   name: saista-gateway-class
 spec:
-  controllerName: gateway.kgateway.dev/controller
+  controllerName: kgateway.dev/kgateway
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
