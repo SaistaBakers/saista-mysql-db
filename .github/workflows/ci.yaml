@@ -1,0 +1,97 @@
+name: CI Pipeline — MySQL DB
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+
+# ─────────────────────────────────────────────
+# JOB 1 — SONARQUBE SCAN (SCA)
+# ─────────────────────────────────────────────
+  sonar-scan:
+    name: SonarQube Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ github.event.repository.name }}
+            -Dsonar.sources=.
+
+# ─────────────────────────────────────────────
+# JOB 2 — NOTIFY IF SONAR FAILS
+# ─────────────────────────────────────────────
+  notify-sonar-failure:
+    needs: sonar-scan
+    if: always() && needs.sonar-scan.result == 'failure'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Email
+        uses: SaistaBakers/saista-user-service/.github/actions/notification-action@main
+        with:
+          subject: "❌ Sonar Failed — ${{ github.repository }}"
+          smtp_password: ${{ secrets.SMTP_PASSWORD }}
+          smtp_username: ${{ secrets.SMTP_USERNAME }}
+          recipient: ${{ secrets.SMTP_RECIPIENT }}
+          body: |
+            <h2>SonarQube Failed</h2>
+            <p>Repository: ${{ github.repository }}</p>
+            <p>Branch: ${{ github.ref_name }}</p>
+            <p><a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Logs</a></p>
+
+# ─────────────────────────────────────────────
+# JOB 3 — SNYK IaC SCAN (K8s manifests)
+# ─────────────────────────────────────────────
+  snyk-scan:
+    needs: sonar-scan
+    if: needs.sonar-scan.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Snyk
+        uses: snyk/actions/setup@master
+
+      - name: Run Snyk IaC Scan
+        run: snyk iac test k8s/ --severity-threshold=high
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+# ─────────────────────────────────────────────
+# JOB 4 — NOTIFY IF SNYK FAILS
+# ─────────────────────────────────────────────
+  notify-snyk-failure:
+    needs: snyk-scan
+    if: always() && needs.snyk-scan.result == 'failure'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send Email
+        uses: SaistaBakers/saista-user-service/.github/actions/notification-action@main
+        with:
+          subject: "❌ Snyk Failed — ${{ github.repository }}"
+          smtp_password: ${{ secrets.SMTP_PASSWORD }}
+          smtp_username: ${{ secrets.SMTP_USERNAME }}
+          recipient: ${{ secrets.SMTP_RECIPIENT }}
+          body: |
+            <h2>Snyk IaC Scan Failed</h2>
+            <p>High severity misconfigurations detected in Kubernetes manifests</p>
+            <p><a href="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}">View Logs</a></p>
